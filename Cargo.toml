@@ -1,0 +1,21 @@
+[package]
+name = "wgpu-conveyor"
+version = "0.1.0"
+description = "Buffer belt abstraction for wgpu"
+license = "MIT OR Apache-2.0 OR Zlib"
+authors = ["Connor Fitzgerald <connorwadefitzgerald@gmail.com>"]
+edition = "2018"
+
+repository = "https://github.com/BVE-Reborn/wgpu-conveyor"
+readme = "README.md"
+categories = ["rendering", "memory-management"]
+keywords = ["bve", "memory", "buffer-belt", "wgpu"]
+
+[dependencies]
+arrayvec = "0.5"
+bitflags = "1"
+lru = "0.6"
+parking_lot = "0.11"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+wgpu = "0.6"
+
