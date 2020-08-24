@@ -1,9 +1,92 @@
 // Rust warnings
+#![forbid(unsafe_code)]
 #![deny(future_incompatible)]
 #![deny(nonstandard_style)]
 #![deny(rust_2018_idioms)]
 // Rustdoc Warnings
 #![deny(intra_doc_link_resolution_failure)]
+
+//! Buffer belt abstraction for wgpu supporting UMA optimization, automatic resizing, and a bind group cache.
+//!
+//! ## Example
+//!
+//! ```
+//! use wgpu_conveyor::{AutomatedBuffer, AutomatedBufferManager, UploadStyle, BindGroupCache};
+//! use wgpu::*;
+//!
+//! // Create wgpu instance, adapter, device, queue, and bind_group_layout.
+//!
+//! # let instance = Instance::new(BackendBit::PRIMARY);
+//! # let adapter_opt = RequestAdapterOptions { compatible_surface: None, power_preference: PowerPreference::HighPerformance };
+//! # let adapter = match pollster::block_on(instance.request_adapter(&adapter_opt)) {
+//! #     Some(adapter) => adapter,
+//! #     None => { eprintln!("no adapter found, skipping functional test"); return; },
+//! # };
+//! # let device_opt = DeviceDescriptor { features: Features::MAPPABLE_PRIMARY_BUFFERS, limits: Limits::default(), shader_validation: false };
+//! # let (device, queue) = pollster::block_on(adapter.request_device(&device_opt, None)).unwrap();
+//! # let entry = BindGroupLayoutEntry{ binding: 0, visibility: ShaderStage::VERTEX, ty: BindingType::UniformBuffer { dynamic: false, min_binding_size: None }, count: None};
+//! # let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor { label: None, entries: &[entry]});
+//! let device_type = adapter.get_info().device_type;
+//!
+//! // Create a single buffer manager.
+//! let mut manager = AutomatedBufferManager::new(UploadStyle::from_device_type(&device_type));
+//!
+//! // Create a buffer from that manager
+//! let mut buffer = manager.create_new_buffer(&device, 128, BufferUsage::UNIFORM, Some("label"));
+//!
+//! /////////////////////////////////////
+//! // -- Below happens every frame -- //
+//! /////////////////////////////////////
+//!
+//! // Write to that buffer
+//! let mut command_encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+//! buffer.write_to_buffer(
+//!     &device,
+//!     &mut command_encoder,
+//!     128,
+//!     |buffer: &mut [u8]| {
+//!         for (idx, byte) in buffer.iter_mut().enumerate() {
+//!             *byte = idx as u8;
+//!         }
+//!     }
+//! );
+//!
+//! // Use buffer in bind group
+//! let mut bind_group_cache = BindGroupCache::new();
+//! let bind_group_key = bind_group_cache.create_bind_group(&buffer, true, |raw_buf| {
+//!     device.create_bind_group(&BindGroupDescriptor {
+//!         label: None,
+//!         layout: &bind_group_layout,
+//!         entries: &[BindGroupEntry {
+//!             binding: 0,
+//!             resource: BindingResource::Buffer(raw_buf.inner.slice(..))
+//!         }]
+//!     })
+//! });
+//!
+//! # let mut renderpass = command_encoder.begin_compute_pass();
+//! // Use bind group
+//! renderpass.set_bind_group(0, bind_group_cache.get(&bind_group_key).unwrap(), &[]);
+//!
+//! # drop(renderpass);
+//! // Submit copies
+//! queue.submit(Some(command_encoder.finish()));
+//!
+//! // Pump buffers
+//! let futures = manager.pump();
+//!
+//! # fn spawn<T>(_: T) {}
+//! // Run futures async
+//! for fut in futures {
+//!     spawn(fut);
+//! }
+//!
+//! // Loop back to beginning of frame
+//! ```
+//!
+//! ## MSRV
+//!
+//! Rust 1.41
 
 use arrayvec::ArrayVec;
 pub use cache::*;
@@ -22,12 +105,17 @@ mod cache;
 
 pub type BeltBufferId = usize;
 
+/// Method of upload used by all automated buffers.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UploadStyle {
+    /// Maps the buffer directly. Efficient on UMA systems. Requires
+    /// [`wgpu::Features::MAPPABLE_PRIMARY_BUFFERS`] enabled during device creation.
     Mapping,
+    /// Maps a staging buffer then copies to buffer. Efficent on NUMA systems.
     Staging,
 }
 impl UploadStyle {
+    /// Chooses most efficient style for the device type.
     #[must_use]
     pub fn from_device_type(ty: &DeviceType) -> Self {
         match ty {
@@ -37,6 +125,13 @@ impl UploadStyle {
     }
 }
 
+/// Creates and manages all running [`AutomatedBuffer`]s.
+///
+/// Responsible for making sure the belts are properly pumped.
+///
+/// [`pump`](AutomatedBufferManager::pump) must be called after all
+/// buffers are written to, and it's futures spawned on an executor
+/// that will run them concurrently.
 pub struct AutomatedBufferManager {
     belts: Vec<Weak<Mutex<Belt>>>,
     style: UploadStyle,
@@ -62,12 +157,17 @@ impl AutomatedBufferManager {
         buffer
     }
 
-    pub async fn pump(&mut self) -> Vec<impl Future<Output = ()>> {
+    /// Must be called after all buffers are written to and the returned futures must be spawned
+    /// on an executor that will run them concurrently.
+    ///
+    /// If they are not polled, the belts will just constantly leak memory as the futures
+    /// allow the belts to reuse buffers.
+    pub fn pump(&mut self) -> Vec<impl Future<Output = ()>> {
         let mut valid = Vec::with_capacity(self.belts.len());
         let mut futures = Vec::with_capacity(self.belts.len());
         for belt in &self.belts {
             if let Some(belt) = belt.upgrade() {
-                if let Some(future) = Belt::pump(belt).await {
+                if let Some(future) = Belt::pump(belt) {
                     futures.push(future);
                 }
                 valid.push(true);
@@ -94,20 +194,28 @@ fn check_should_resize(current: BufferAddress, desired: BufferAddress) -> Option
     }
 }
 
+/// A buffer plus an id, internal size, and dirty flag.
+///
+/// If you muck with this manually, AutomatedBelts will likely break, but they're there
+/// in case they are needed.
 pub struct IdBuffer {
+    /// Underlying buffer.
     pub inner: Buffer,
+    /// Hashable id that is unique within the AutomatedBuffer.
     pub id: BeltBufferId,
-    size: BufferAddress,
-    dirty: AtomicBool,
+    /// Size of the buffer. _Not_ the requested size.
+    pub size: BufferAddress,
+    /// Buffer has been written to and must be pumped.
+    pub dirty: AtomicBool,
 }
 
+/// Internal representation of a belt
 struct Belt {
     usable: ArrayVec<[Arc<IdBuffer>; 2]>,
     usage: BufferUsage,
     current_id: usize,
     live_buffers: usize,
 }
-
 impl Belt {
     fn new(usage: BufferUsage) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
@@ -138,6 +246,7 @@ impl Belt {
         );
     }
 
+    /// Ensures that `self.usable` contains at least one usable buffer for `size`.
     fn ensure_buffer(&mut self, device: &Device, size: BufferAddress) {
         if self.usable.is_empty() {
             let new_size = size.next_power_of_two().max(16);
@@ -159,17 +268,21 @@ impl Belt {
         }
     }
 
+    /// Get the active buffer
     fn get_buffer(&self) -> &IdBuffer {
         self.get_buffer_arc()
     }
 
+    /// Get the active buffer as an Arc
     fn get_buffer_arc(&self) -> &Arc<IdBuffer> {
         self.usable
             .get(0)
             .expect("Cannot call get_buffer without calling ensure_buffer first")
     }
 
-    async fn pump(lockable: Arc<Mutex<Self>>) -> Option<impl Future<Output = ()>> {
+    /// Pump the belt and return a future which must be polled to
+    /// recall the buffer.
+    fn pump(lockable: Arc<Mutex<Self>>) -> Option<impl Future<Output = ()>> {
         let mut inner = lockable.lock();
 
         if inner.usable.is_empty() {
@@ -182,6 +295,7 @@ impl Belt {
         } else {
             return None;
         };
+
         drop(inner);
 
         let mapping = buffer.inner.slice(..).map_async(MapMode::Write);
@@ -198,11 +312,16 @@ impl Belt {
     }
 }
 
+/// Statistics about current buffers.
 #[derive(Debug, Copy, Clone)]
 pub struct AutomatedBufferStats {
-    current_id: usize,
-    live_buffers: usize,
-    current_size: Option<BufferAddress>,
+    /// ID of the current buffer. Each new buffer gets a sequentially higher number, so
+    /// can be used to figure out how many buffers were made in total.
+    pub current_id: BeltBufferId,
+    /// Total number of buffers that are in the queue or currently in flight.
+    pub live_buffers: usize,
+    /// Current size of the underlying buffer.
+    pub current_size: Option<BufferAddress>,
 }
 
 enum UpstreamBuffer {
@@ -214,8 +333,8 @@ enum UpstreamBuffer {
     },
 }
 
-/// A buffer which automatically uses either staging buffers or direct mapping to read/write to its
-/// internal buffer based on the provided [`UploadStyle`]
+/// A buffer which automatically uses either staging buffers or direct mapping to write to its
+/// internal buffer based on the provided [`UploadStyle`].
 pub struct AutomatedBuffer {
     belt: Arc<Mutex<Belt>>,
     upstream: UpstreamBuffer,
@@ -269,6 +388,11 @@ impl AutomatedBuffer {
         }
     }
 
+    /// Buffer that should be used in bind groups to access the data in the buffer.
+    ///
+    /// Every single time [`write_to_buffer`](AutomatedBuffer::write_to_buffer) is called,
+    /// this could change and the bind group needs to be remade. The [`BindGroupCache`] can
+    /// help streamline this process and re-use bind groups.
     pub fn get_current_inner(&self) -> Arc<IdBuffer> {
         match self.upstream {
             UpstreamBuffer::Mapping => Arc::clone(self.belt.lock().get_buffer_arc()),
@@ -276,6 +400,9 @@ impl AutomatedBuffer {
         }
     }
 
+    /// Ensure there's a valid upstream buffer of the given size.
+    ///
+    /// no-op when mapping.
     fn ensure_upstream(&mut self, device: &Device, size: BufferAddress) {
         let size = size.max(16);
         if let UpstreamBuffer::Staging {
@@ -302,6 +429,13 @@ impl AutomatedBuffer {
     }
 
     /// Writes to the underlying buffer using the proper write style.
+    ///
+    /// The buffer will be resized to the given `size`.
+    ///
+    /// All needed copy operations will be recorded onto `encoder`.
+    ///
+    /// Once the buffer is mapped and ready to be written to, the slice of exactly
+    /// `size` bytes will be provided to `data_fn` to be written in.
     pub fn write_to_buffer<DataFn>(
         &mut self,
         device: &Device,

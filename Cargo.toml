@@ -19,3 +19,5 @@ parking_lot = "0.11"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 wgpu = "0.6"
 
+[dev-dependencies]
+pollster = "0.2"

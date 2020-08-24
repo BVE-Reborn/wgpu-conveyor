@@ -4,10 +4,20 @@ use crate::{AutomatedBuffer, BeltBufferId, IdBuffer};
 use std::{hash::Hash, sync::Arc};
 use wgpu::*;
 
+/// Values that can be used with [`BindGroupCache`].
+///
+/// Implemented for &AutomatedBuffer and 1, 2, 3, and 4-tuples thereof.
 pub trait AutomatedBufferSet<'buf> {
+    /// Key type corresponding to this buffer type.
+    ///
+    /// [`BufferCache1`], [`BufferCache2`], [`BufferCache3`], and [`BufferCache4`]
+    /// are aliases for this value for the corresponding value, 2, 3, and 4-tuple.
     type Key: Hash + Eq + Clone;
+    /// Underlying buffer type.
     type Value;
+    /// Get the buffer values
     fn get(self) -> Self::Value;
+    /// Translate a value into a key
     fn value_to_key(value: &Self::Value) -> Self::Key;
 }
 
@@ -87,15 +97,30 @@ impl<'buf> AutomatedBufferSet<'buf>
     }
 }
 
+/// Key type for a single buffer.
+pub type BufferCache1 = BeltBufferId;
+/// Key type for two buffers.
+pub type BufferCache2 = (BeltBufferId, BeltBufferId);
+/// Key type for three buffers.
+pub type BufferCache3 = (BeltBufferId, BeltBufferId, BeltBufferId);
+/// Key type for four buffers.
+pub type BufferCache4 = (BeltBufferId, BeltBufferId, BeltBufferId, BeltBufferId);
+
+/// Bind group cache. Corresponds to a single bind group.
+///
+/// If you use multiple bind groups in a single cache, you will likely have cache
+/// misses constantly.
 pub struct BindGroupCache<Key: Hash + Eq + Clone> {
     cache: lru::LruCache<Key, BindGroup>,
 }
 impl<Key: Hash + Eq + Clone> BindGroupCache<Key> {
+    /// Create a bind group cache with default size 4.
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(4)
     }
 
+    /// Create a bind group cache with given size.
     #[must_use]
     pub fn with_capacity(size: usize) -> Self {
         Self {
@@ -103,6 +128,23 @@ impl<Key: Hash + Eq + Clone> BindGroupCache<Key> {
         }
     }
 
+    /// Empty cache to force repopulation
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    /// Using the set of [`AutomatedBuffer`](AutomatedBuffer)s provided
+    /// in `buffers`, create or retrieve a bind group and return the key
+    /// to call `get` with.
+    ///
+    /// If a bind group is not found, `bind_group_fn` will be called with
+    /// the resolved [`BeltBufferId`](BeltBufferId) for the given buffers.
+    ///
+    /// This result will then be cached.
+    ///
+    /// `use_cache`, if false, will always call the function and overwrite
+    /// the value (if any) in the cache. This is useful if bind groups
+    /// are changing every invocation.
     pub fn create_bind_group<'a, Set, BindGroupFn>(
         &mut self,
         buffers: Set,
