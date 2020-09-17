@@ -495,6 +495,7 @@ pub fn write_to_buffer2<DataFn>(
 }
 
 /// Write to a three [`AutomatedBuffer`]s at the same time.
+#[allow(clippy::too_many_arguments)]
 pub fn write_to_buffer3<DataFn>(
     device: &Device,
     encoder: &mut CommandEncoder,
@@ -518,6 +519,7 @@ pub fn write_to_buffer3<DataFn>(
 }
 
 /// Write to a four [`AutomatedBuffer`]s at the same time.
+#[allow(clippy::too_many_arguments)]
 pub fn write_to_buffer4<DataFn>(
     device: &Device,
     encoder: &mut CommandEncoder,
