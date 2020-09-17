@@ -44,7 +44,7 @@
 //!     &device,
 //!     &mut command_encoder,
 //!     128,
-//!     |buffer: &mut [u8]| {
+//!     |_encoder: &mut CommandEncoder, buffer: &mut [u8]| {
 //!         for (idx, byte) in buffer.iter_mut().enumerate() {
 //!             *byte = idx as u8;
 //!         }
@@ -443,7 +443,7 @@ impl AutomatedBuffer {
         size: BufferAddress,
         data_fn: DataFn,
     ) where
-        DataFn: FnOnce(&mut [u8]),
+        DataFn: FnOnce(&mut CommandEncoder, &mut [u8]),
     {
         self.ensure_upstream(device, size);
         let mut inner = self.belt.lock();
@@ -451,7 +451,7 @@ impl AutomatedBuffer {
         let buffer = inner.get_buffer();
         let slice = buffer.inner.slice(0..size);
         let mut mapping = slice.get_mapped_range_mut();
-        data_fn(&mut mapping[0..size as usize]);
+        data_fn(encoder, &mut mapping[0..size as usize]);
         drop(mapping);
         buffer.dirty.store(true, Ordering::Relaxed);
         buffer.inner.unmap();
@@ -460,6 +460,88 @@ impl AutomatedBuffer {
             encoder.copy_buffer_to_buffer(&buffer.inner, 0, &inner.inner, 0, size as BufferAddress);
         }
     }
+}
+
+/// Write to a single [`AutomatedBuffer`].
+pub fn write_to_buffer1<DataFn>(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    buffer0: &mut AutomatedBuffer,
+    size0: BufferAddress,
+    data_fn: DataFn,
+) where
+    DataFn: FnOnce(&mut CommandEncoder, &mut [u8]),
+{
+    buffer0.write_to_buffer(device, encoder, size0, data_fn)
+}
+
+/// Write to a two [`AutomatedBuffer`]s at the same time.
+pub fn write_to_buffer2<DataFn>(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    buffer0: &mut AutomatedBuffer,
+    size0: BufferAddress,
+    buffer1: &mut AutomatedBuffer,
+    size1: BufferAddress,
+    data_fn: DataFn,
+) where
+    DataFn: FnOnce(&mut CommandEncoder, &mut [u8], &mut [u8]),
+{
+    buffer0.write_to_buffer(device, encoder, size0, |encoder, data0| {
+        buffer1.write_to_buffer(device, encoder, size1, |encoder, data1| {
+            data_fn(encoder, data0, data1);
+        })
+    })
+}
+
+/// Write to a three [`AutomatedBuffer`]s at the same time.
+pub fn write_to_buffer3<DataFn>(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    buffer0: &mut AutomatedBuffer,
+    size0: BufferAddress,
+    buffer1: &mut AutomatedBuffer,
+    size1: BufferAddress,
+    buffer2: &mut AutomatedBuffer,
+    size2: BufferAddress,
+    data_fn: DataFn,
+) where
+    DataFn: FnOnce(&mut CommandEncoder, &mut [u8], &mut [u8], &mut [u8]),
+{
+    buffer0.write_to_buffer(device, encoder, size0, |encoder, data0| {
+        buffer1.write_to_buffer(device, encoder, size1, |encoder, data1| {
+            buffer2.write_to_buffer(device, encoder, size2, |encoder, data2| {
+                data_fn(encoder, data0, data1, data2);
+            })
+        })
+    })
+}
+
+/// Write to a four [`AutomatedBuffer`]s at the same time.
+pub fn write_to_buffer4<DataFn>(
+    device: &Device,
+    encoder: &mut CommandEncoder,
+    buffer0: &mut AutomatedBuffer,
+    size0: BufferAddress,
+    buffer1: &mut AutomatedBuffer,
+    size1: BufferAddress,
+    buffer2: &mut AutomatedBuffer,
+    size2: BufferAddress,
+    buffer3: &mut AutomatedBuffer,
+    size3: BufferAddress,
+    data_fn: DataFn,
+) where
+    DataFn: FnOnce(&mut CommandEncoder, &mut [u8], &mut [u8], &mut [u8], &mut [u8]),
+{
+    buffer0.write_to_buffer(device, encoder, size0, |encoder, data0| {
+        buffer1.write_to_buffer(device, encoder, size1, |encoder, data1| {
+            buffer2.write_to_buffer(device, encoder, size2, |encoder, data2| {
+                buffer3.write_to_buffer(device, encoder, size3, |encoder, data3| {
+                    data_fn(encoder, data0, data1, data2, data3);
+                })
+            })
+        })
+    })
 }
 
 #[cfg(test)]
