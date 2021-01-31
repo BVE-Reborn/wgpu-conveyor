@@ -4,7 +4,7 @@
 #![deny(nonstandard_style)]
 #![deny(rust_2018_idioms)]
 // Rustdoc Warnings
-#![deny(intra_doc_link_resolution_failure)]
+#![deny(broken_intra_doc_links)]
 
 //! Buffer belt abstraction for wgpu supporting UMA optimization, automatic resizing, and a bind group cache.
 //!
@@ -59,12 +59,12 @@
 //!         layout: &bind_group_layout,
 //!         entries: &[BindGroupEntry {
 //!             binding: 0,
-//!             resource: BindingResource::Buffer(raw_buf.inner.slice(..))
+//!             resource: raw_buf.inner.as_entire_binding()
 //!         }]
 //!     })
 //! });
 //!
-//! # let mut renderpass = command_encoder.begin_compute_pass();
+//! # let mut renderpass = command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
 //! // Use bind group
 //! renderpass.set_bind_group(0, bind_group_cache.get(&bind_group_key).unwrap(), &[]);
 //!
