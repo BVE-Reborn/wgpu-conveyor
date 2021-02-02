@@ -1,6 +1,6 @@
 [package]
 name = "wgpu-conveyor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Buffer belt abstraction for wgpu"
 license = "MIT OR Apache-2.0 OR Zlib"
 authors = ["Connor Fitzgerald <connorwadefitzgerald@gmail.com>"]

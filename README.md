@@ -33,7 +33,7 @@ buffer.write_to_buffer(
     &device,
     &mut command_encoder,
     128,
-    |buffer: &mut [u8]| {
+    |_encoder: &mut CommandEncoder, buffer: &mut [u8]| {
         for (idx, byte) in buffer.iter_mut().enumerate() {
             *byte = idx as u8;
         }
@@ -48,7 +48,7 @@ let bind_group_key = bind_group_cache.create_bind_group(&buffer, true, |raw_buf|
         layout: &bind_group_layout,
         entries: &[BindGroupEntry {
             binding: 0,
-            resource: BindingResource::Buffer(raw_buf.inner.slice(..))
+            resource: raw_buf.inner.as_entire_binding()
         }]
     })
 });
@@ -72,6 +72,6 @@ for fut in futures {
 
 ### MSRV
 
-Rust 1.41
+Rust 1.47
 
 License: MIT OR Apache-2.0 OR Zlib
