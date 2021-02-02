@@ -22,9 +22,9 @@
 //! #     Some(adapter) => adapter,
 //! #     None => { eprintln!("no adapter found, skipping functional test"); return; },
 //! # };
-//! # let device_opt = DeviceDescriptor { features: Features::MAPPABLE_PRIMARY_BUFFERS, limits: Limits::default(), shader_validation: false };
+//! # let device_opt = DeviceDescriptor { label: None, features: Features::MAPPABLE_PRIMARY_BUFFERS, limits: Limits::default() };
 //! # let (device, queue) = pollster::block_on(adapter.request_device(&device_opt, None)).unwrap();
-//! # let entry = BindGroupLayoutEntry{ binding: 0, visibility: ShaderStage::VERTEX, ty: BindingType::UniformBuffer { dynamic: false, min_binding_size: None }, count: None};
+//! # let entry = BindGroupLayoutEntry{ binding: 0, visibility: ShaderStage::VERTEX, ty: BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None};
 //! # let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor { label: None, entries: &[entry]});
 //! let device_type = adapter.get_info().device_type;
 //!

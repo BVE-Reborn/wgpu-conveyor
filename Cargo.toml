@@ -17,7 +17,7 @@ bitflags = "1"
 lru = "0.6"
 parking_lot = "0.11"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-wgpu = { version = "0.6", git = "https://github.com/gfx-rs/wgpu-rs", rev = "f882abcf4b3d1e9bfbfc95b61874344661956479" }
+wgpu = "0.7"
 
 [dev-dependencies]
 pollster = "0.2"
