@@ -86,7 +86,7 @@
 //!
 //! ## MSRV
 //!
-//! Rust 1.47
+//! Rust 1.48
 
 use arrayvec::ArrayVec;
 pub use cache::*;

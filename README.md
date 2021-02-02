@@ -72,6 +72,6 @@ for fut in futures {
 
 ### MSRV
 
-Rust 1.47
+Rust 1.48
 
 License: MIT OR Apache-2.0 OR Zlib

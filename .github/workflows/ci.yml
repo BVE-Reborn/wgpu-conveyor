@@ -10,7 +10,7 @@ jobs:
 
     strategy:
       matrix:
-        rust_version: [stable, "1.47.0"]
+        rust_version: [stable, "1.48.0"]
       fail-fast: false
 
     steps:
